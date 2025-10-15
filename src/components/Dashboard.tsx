@@ -101,9 +101,16 @@ export default function Dashboard() {
   // Fetch email logs from Supabase
   const fetchLogs = async () => {
     try {
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const startOfTomorrow = new Date(startOfToday);
+      startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+
       const { data, error } = await supabase
         .from('email_logs')
         .select('*')
+        .gte('timestamp', startOfToday.toISOString())
+        .lt('timestamp', startOfTomorrow.toISOString())
         .order('timestamp', { ascending: false })
         .limit(50);
 
@@ -121,6 +128,11 @@ export default function Dashboard() {
   useEffect(() => {
     fetchLogs();
 
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const startOfTomorrow = new Date(startOfToday);
+    startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+
     const channel = supabase
       .channel('email_logs_changes')
       .on(
@@ -131,7 +143,11 @@ export default function Dashboard() {
           table: 'email_logs',
         },
         (payload) => {
-          setLogs((current) => [payload.new as EmailLog, ...current].slice(0, 50));
+          const row = payload.new as EmailLog;
+          const ts = new Date(row.timestamp);
+          if (ts >= startOfToday && ts < startOfTomorrow) {
+            setLogs((current) => [row, ...current].slice(0, 50));
+          }
         }
       )
       .subscribe();
@@ -258,8 +274,8 @@ export default function Dashboard() {
         {/* Email Logs Table */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="px-6 py-4 border-b border-slate-200">
-            <h2 className="text-lg font-semibold text-slate-900">Recent Email Logs</h2>
-            <p className="text-sm text-slate-600 mt-1">Latest 50 emails sent by the automation</p>
+            <h2 className="text-lg font-semibold text-slate-900">Today’s Email Logs</h2>
+            <p className="text-sm text-slate-600 mt-1">Showing emails sent today (latest first)</p>
           </div>
 
           {isLoadingLogs ? (
