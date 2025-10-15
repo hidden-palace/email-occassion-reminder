@@ -90,6 +90,27 @@ Deno.serve(async (req: Request) => {
       "Content-Type": "application/json",
     };
 
+    // Resolve canonical workflow id (numeric) for REST fallbacks when activating/deactivating
+    let canonicalId = workflowId as string;
+    const headers: Record<string, string> = {
+      "X-N8N-API-KEY": n8nApiKey,
+      "Authorization": `Bearer ${n8nApiKey}`,
+      "Content-Type": "application/json",
+    };
+    if (action === "activate" || action === "deactivate") {
+      try {
+        const probe = await fetch(`${n8nUrl}/api/v1/workflows/${workflowId}`, { method: "GET", headers });
+        if (probe.ok) {
+          const wf = await probe.json();
+          if (wf && (typeof wf.id === 'number' || typeof wf.id === 'string')) {
+            canonicalId = String(wf.id);
+          }
+        }
+      } catch (_) {
+        // ignore; fallback will still try with original id
+      }
+    }
+
     // First attempt: API v1 (supports GET status, PATCH partial updates)
     let n8nResponse = await fetch(url, {
       method,
@@ -99,7 +120,7 @@ Deno.serve(async (req: Request) => {
 
     // Fallback for activate/deactivate: use REST toggle endpoints if first call failed
     if (!n8nResponse.ok && (action === "activate" || action === "deactivate")) {
-      const fallbackUrl = `${n8nUrl}/rest/workflows/${workflowId}/${action}`;
+      const fallbackUrl = `${n8nUrl}/rest/workflows/${canonicalId}/${action}`;
       n8nResponse = await fetch(fallbackUrl, {
         method: "POST",
         headers,
