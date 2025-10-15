@@ -2,8 +2,8 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, apikey, X-N8N-API-KEY",
 };
 
 interface WorkflowRequest {
@@ -43,27 +43,21 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    let body: WorkflowRequest;
-    try {
-      const text = await req.text();
-      body = JSON.parse(text);
-    } catch (parseError) {
-      return new Response(
-        JSON.stringify({
-          error: "Invalid JSON in request body",
-          details: parseError instanceof Error ? parseError.message : "Unknown parse error"
-        }),
-        {
-          status: 400,
-          headers: {
-            ...corsHeaders,
-            "Content-Type": "application/json",
-          },
-        }
-      );
+    // Parse action from JSON body if present; otherwise default to 'status'.
+    const text = await req.text();
+    let action: WorkflowRequest["action"] | undefined;
+    if (text && text.trim().length > 0) {
+      try {
+        const body = JSON.parse(text) as Partial<WorkflowRequest>;
+        action = body.action;
+      } catch (parseError) {
+        // Accept empty/invalid JSON by falling back to 'status' to be more forgiving.
+      }
     }
-
-    const { action } = body;
+    if (!action) {
+      // Allow GET without body to act as status.
+      action = req.method === "GET" ? "status" : "status";
+    }
 
     n8nUrl = n8nUrl.replace(/\/+$/, '');
 
@@ -78,26 +72,87 @@ Deno.serve(async (req: Request) => {
         break;
       case "activate":
         url = `${n8nUrl}/api/v1/workflows/${workflowId}`;
-        method = "PATCH"; // PUT requires full workflow body; PATCH supports partial updates
+        method = "PATCH";
         requestBody = JSON.stringify({ active: true });
         break;
       case "deactivate":
         url = `${n8nUrl}/api/v1/workflows/${workflowId}`;
-        method = "PATCH"; // PUT requires full workflow body; PATCH supports partial updates
+        method = "PATCH";
         requestBody = JSON.stringify({ active: false });
         break;
       default:
         throw new Error("Invalid action");
     }
 
-    const n8nResponse = await fetch(url, {
+    const headers: Record<string, string> = {
+      "X-N8N-API-KEY": n8nApiKey,
+      "Authorization": `Bearer ${n8nApiKey}`,
+      "Content-Type": "application/json",
+    };
+
+    // First attempt: API v1 (supports GET status, PATCH partial updates)
+    let n8nResponse = await fetch(url, {
       method,
-      headers: {
-        "X-N8N-API-KEY": n8nApiKey,
-        "Content-Type": "application/json",
-      },
+      headers,
       ...(requestBody && { body: requestBody }),
     });
+
+    // Fallback for activate/deactivate: use REST toggle endpoints if first call failed
+    if (!n8nResponse.ok && (action === "activate" || action === "deactivate")) {
+      const fallbackUrl = `${n8nUrl}/rest/workflows/${workflowId}/${action}`;
+      n8nResponse = await fetch(fallbackUrl, {
+        method: "POST",
+        headers,
+      });
+      if (!n8nResponse.ok) {
+        const errorText = await n8nResponse.text();
+        return new Response(
+          JSON.stringify({
+            error: `n8n API returned ${n8nResponse.status}`,
+            details: errorText.substring(0, 500),
+            url: fallbackUrl,
+            method: "POST",
+          }),
+          {
+            status: 502,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+    } else if (!n8nResponse.ok && action === "status") {
+      // Fallback for status: try REST endpoint
+      const fallbackUrl = `${n8nUrl}/rest/workflows/${workflowId}`;
+      n8nResponse = await fetch(fallbackUrl, { method: "GET", headers });
+      if (!n8nResponse.ok) {
+        const errorText = await n8nResponse.text();
+        return new Response(
+          JSON.stringify({
+            error: `n8n API returned ${n8nResponse.status}`,
+            details: errorText.substring(0, 500),
+            url: fallbackUrl,
+            method: "GET",
+          }),
+          {
+            status: 502,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+    } else if (!n8nResponse.ok) {
+      const errorText = await n8nResponse.text();
+      return new Response(
+        JSON.stringify({
+          error: `n8n API returned ${n8nResponse.status}`,
+          details: errorText.substring(0, 500),
+          url: url,
+          method: method,
+        }),
+        {
+          status: 502,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
 
     if (!n8nResponse.ok) {
       const errorText = await n8nResponse.text();
