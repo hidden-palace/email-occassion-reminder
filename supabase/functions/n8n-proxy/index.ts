@@ -78,12 +78,12 @@ Deno.serve(async (req: Request) => {
         break;
       case "activate":
         url = `${n8nUrl}/api/v1/workflows/${workflowId}`;
-        method = "PUT";
+        method = "PATCH"; // PUT requires full workflow body; PATCH supports partial updates
         requestBody = JSON.stringify({ active: true });
         break;
       case "deactivate":
         url = `${n8nUrl}/api/v1/workflows/${workflowId}`;
-        method = "PUT";
+        method = "PATCH"; // PUT requires full workflow body; PATCH supports partial updates
         requestBody = JSON.stringify({ active: false });
         break;
       default:
