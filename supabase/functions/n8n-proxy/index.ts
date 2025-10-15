@@ -71,14 +71,14 @@ Deno.serve(async (req: Request) => {
         method = "GET";
         break;
       case "activate":
-        url = `${n8nUrl}/api/v1/workflows/${workflowId}`;
-        method = "PATCH";
-        requestBody = JSON.stringify({ active: true });
+        url = `${n8nUrl}/api/v1/workflows/${workflowId}/activate`;
+        method = "POST";
+        requestBody = undefined;
         break;
       case "deactivate":
-        url = `${n8nUrl}/api/v1/workflows/${workflowId}`;
-        method = "PATCH";
-        requestBody = JSON.stringify({ active: false });
+        url = `${n8nUrl}/api/v1/workflows/${workflowId}/deactivate`;
+        method = "POST";
+        requestBody = undefined;
         break;
       default:
         throw new Error("Invalid action");
@@ -88,15 +88,11 @@ Deno.serve(async (req: Request) => {
       "X-N8N-API-KEY": n8nApiKey,
       "Authorization": `Bearer ${n8nApiKey}`,
       "Content-Type": "application/json",
+      "Accept": "application/json",
     };
 
     // Resolve canonical workflow id (numeric) for REST fallbacks when activating/deactivating
     let canonicalId = workflowId as string;
-    const headers: Record<string, string> = {
-      "X-N8N-API-KEY": n8nApiKey,
-      "Authorization": `Bearer ${n8nApiKey}`,
-      "Content-Type": "application/json",
-    };
     if (action === "activate" || action === "deactivate") {
       try {
         const probe = await fetch(`${n8nUrl}/api/v1/workflows/${workflowId}`, { method: "GET", headers });
